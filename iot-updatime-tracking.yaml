@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: IoT Device Uptime Tracking
+
+Parameters:
+  MachineDataTopic:
+    Type: String
+    Default: 'devices/+/data'
+    Description: MQTT topic for receiving machine data
+
+Resources:
+
+  # DynamoDB Table
+  MachineStatusTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: machine-status
+      AttributeDefinitions:
+        - AttributeName: MachineID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: MachineID
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  # Lambda Function
+  UptimeTrackingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: uptime-tracking
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          from datetime import datetime, timezone
+          from decimal import Decimal
+
+          # Initialize DynamoDB client
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table('machine-status')
+
+          def lambda_handler(event, context):
+              # Extract data from the MQTT message
+              machine_id = event['MachineID']
+              timestamp = event['Timestamp']
+              current = event['D2_Data_N']
+
+              # Convert timestamp to datetime object
+              current_time = datetime.fromtimestamp(timestamp, timezone.utc)
+
+              # Determine if the machine is active based on current
+              is_active = current > 500
+
+              # Retrieve the previous state from DynamoDB
+              response = table.get_item(
+                  Key={
+                      'MachineID': machine_id
+                  }
+              )
+
+              if 'Item' in response:
+                  previous_state = response['Item']
+                  previous_timestamp = datetime.fromtimestamp(previous_state['Timestamp'], timezone.utc)
+                  previous_is_active = previous_state['IsActive']
+                  total_uptime = previous_state['TotalUptime']
+
+                  # Calculate time difference
+                  time_diff = (current_time - previous_timestamp).total_seconds()
+
+                  # Update total uptime if the machine was active
+                  if previous_is_active:
+                      total_uptime += Decimal(time_diff)
+              else:
+                  # If it's the first entry for this machine, initialize values
+                  previous_timestamp = current_time
+                  total_uptime = 0
+
+              # Update DynamoDB with new values
+              table.put_item(
+                  Item={
+                      'MachineID': machine_id,
+                      'Timestamp': timestamp,
+                      'Current': current,
+                      'IsActive': is_active,
+                      'TotalUptime': total_uptime
+                  }
+              )
+
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Data processed successfully')
+              }
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Role: !GetAtt LambdaRole.Arn
+
+  # IAM Role for Lambda
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  # IoT Core Rule
+  MachineDataRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        RuleDisabled: false
+        Sql: "SELECT * FROM '${MachineDataTopic}'"
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt UptimeTrackingFunction.Arn
+
+Outputs:
+  MachineStatusTable:
+    Description: DynamoDB table for machine status
+    Value: !Ref MachineStatusTable
+
+  UptimeTrackingFunction:
+    Description: Lambda function for uptime tracking
+    Value: !Ref UptimeTrackingFunction
