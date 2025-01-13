@@ -59,7 +59,7 @@ Here are some example payloads you can use to test the system:
 
 Machine 002 inactive:
 
-```
+```json
 {
   "MachineID": "machine002",
   "Timestamp": 1673820060,
@@ -68,7 +68,8 @@ Machine 002 inactive:
 ```
 
 Machine 003 active:
-```
+
+```json
 {
   "MachineID": "machine003",
   "Timestamp": 1673820120,
