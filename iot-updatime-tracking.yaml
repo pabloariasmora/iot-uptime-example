@@ -117,7 +117,7 @@ Resources:
       TopicRulePayload:
         RuleDisabled: false
         AwsIotSqlVersion: '2016-03-23'  # Added SQL version specification
-        Sql: "SELECT * FROM '${MachineDataTopic}'"
+        Sql: !Sub "SELECT * FROM '${MachineDataTopic}'"
         Actions:
           - Lambda:
               FunctionArn: !GetAtt UptimeTrackingFunction.Arn
